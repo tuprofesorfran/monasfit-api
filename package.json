@@ -1,0 +1,8 @@
+{
+  "name": "monasfit-api",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "API de la biblioteca compartida de ejercicios de MonasFIT SALUD",
+  "dependencies": { "@netlify/blobs": "^8.2.0" }
+}

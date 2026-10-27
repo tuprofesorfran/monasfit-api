@@ -1,0 +1,43 @@
+SERVIDOR DE EJERCICIOS COMPARTIDOS - MonasFIT SALUD
+====================================================
+
+Qué es: un mini-servidor que guarda los ejercicios que crean los alumnos.
+Los ejercicios nuevos quedan PENDIENTES; solo se ven para el resto de la clase cuando tú los publicas.
+
+PUBLICARLO (una sola vez, unos 10 minutos)
+------------------------------------------
+IMPORTANTE: este servidor NO se puede subir arrastrando la carpeta a Netlify (las funciones de servidor no
+funcionan con ese método). Se publica desde GitHub. La aplicación MonasFIT sigue publicándose como siempre.
+
+1. Entra en github.com (crea una cuenta gratuita si no tienes) > "New repository" > nombre: monasfit-api > Private o Public > Create.
+2. En el repositorio nuevo: "uploading an existing file". Arrastra DENTRO de la ventana el contenido de esta
+   carpeta (la carpeta "netlify" y los archivos package.json, netlify.toml, index.html). Pulsa "Commit changes".
+   Comprueba que se ve la ruta  netlify/functions/ejercicios.mjs  en el repositorio.
+3. En Netlify: "Add new project" > "Import an existing project" > GitHub > elige monasfit-api >
+   no cambies nada (sin comando de build, directorio "." ) > Deploy.
+   Si Netlify te deja elegir el nombre, usa por ejemplo  monasfit-api  (quedará https://monasfit-api.netlify.app).
+4. En ese proyecto nuevo: Project configuration > Environment variables > Add a variable:
+      Clave:  ADMIN_CODE
+      Valor:  una contraseña tuya, DISTINTA de la del alumnado, de 8 o más caracteres (es la que usarás para
+              publicar o borrar ejercicios; con 4 cifras sería fácil de adivinar).
+      Scopes: deja marcado "Functions" (y "All scopes" si lo ofrece).
+   Después: Deploys > Trigger deploy > Deploy project (para que la función lea la variable).
+5. Comprueba que el proyecto es PÚBLICO (Project configuration > Access & security). Si pide login de equipo, la
+   aplicación no podrá conectar.
+6. Abre el archivo  config.js  de la carpeta de la aplicación con el Bloc de notas y escribe tu dirección:
+      window.MF_API="https://monasfit-api.netlify.app/api";
+   (cambia el nombre si el tuyo es otro). Guarda y sube la carpeta de la aplicación a monasfit.netlify.app
+   arrastrándola como siempre.
+
+USO DIARIO
+----------
+- Alumnado: al crear su ejercicio, deja marcada la casilla "Compartirlo con mis compañeros".
+- Profesor: en la aplicación, abre el punto 4 (con tu código 3249) > "Ejercicios de los alumnos" > escribe el
+  ADMIN_CODE > Publicar o Eliminar. Los publicados aparecen a toda la clase con la etiqueta "De un compañero".
+- Límites de seguridad: máximo 40 pendientes a la vez, fotos de hasta 100 KB, 400 ejercicios publicados.
+
+NOTAS
+-----
+- Si cambias el código de acceso del alumnado en la aplicación, hay que actualizarlo también aquí (variable
+  STUDENT_HASH). Pídemelo y te lo preparo.
+- No se guarda el nombre de nadie. Revisa las fotos antes de publicar (vienen de internet).
