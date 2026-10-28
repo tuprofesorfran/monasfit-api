@@ -4,8 +4,13 @@
 //    GET  /api/ejercicios            -> ejercicios publicados (sin fotos)
 //    GET  /api/ejercicios?img=ID     -> foto de un ejercicio publicado
 //    POST /api/ejercicios            -> propone un ejercicio (queda PENDIENTE)
+//    GET  /api/videos                -> vídeos aprobados {código: id de YouTube}
+//    POST /api/videos                -> propone un vídeo de YouTube para un ejercicio (queda PENDIENTE)
 //  Profesor (cabecera x-mf-t = variable de entorno ADMIN_CODE):
 //    POST /api/admin {action:"list"|"approve"|"delete", id}
+//    POST /api/admin {action:"vlist"|"vapprove"|"vreject"|"vdelete"|"vcheck"}
+//  Público (lo usan los enlaces de los PDF):
+//    GET  /v/DS-0001?q=texto         -> redirige al vídeo aprobado si sigue disponible; si no, a una búsqueda en YouTube
 //
 // Los ejercicios nuevos nunca se muestran al alumnado hasta que el profesor los publica.
 
@@ -17,6 +22,9 @@ const MAX_APPROVED = 400;
 const MAX_IMG = 100000; // bytes
 const LOCK_MAX = 8;
 const LOCK_MS = 15 * 60 * 1000;
+const MAX_VPEND = 60;
+const DAY = 24 * 3600 * 1000;
+const VCODE = /^DS-\d{4}$/;
 
 const store = () => getStore({ name: "ejercicios", consistency: "strong" });
 const studentHash = () => Netlify.env.get("STUDENT_HASH") || "5683055764724731";
@@ -78,6 +86,52 @@ function parseImg(s) {
   return buf;
 }
 
+// Extrae el identificador (11 caracteres) de un enlace de YouTube. Solo se guarda el identificador.
+function ytId(s) {
+  s = String(s || "").trim();
+  if (!/^https?:\/\//i.test(s) && /^(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i.test(s)) s = "https://" + s;
+  let u;
+  try { u = new URL(s); } catch { return null; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  const h = u.hostname.toLowerCase().replace(/^(www\.|m\.|music\.)/, "");
+  let id = null;
+  if (h === "youtu.be") id = u.pathname.slice(1).split("/")[0];
+  else if (h === "youtube.com") {
+    if (u.pathname === "/watch") id = u.searchParams.get("v");
+    else { const m = /^\/(shorts|embed|live|v)\/([\w-]{11})/.exec(u.pathname); if (m) id = m[2]; }
+  }
+  return id && /^[\w-]{11}$/.test(id) ? id : null;
+}
+
+// true = existe, false = borrado, null = no se ha podido comprobar (no se cambia nada)
+async function alive(id) {
+  try {
+    const r = await fetch("https://www.youtube.com/oembed?format=json&url=" + encodeURIComponent("https://www.youtube.com/watch?v=" + id), { signal: AbortSignal.timeout(4000) });
+    if (r.status === 200 || r.status === 401) return true; // 401: incrustación desactivada, pero el vídeo existe
+    if (r.status === 404 || r.status === 400) return false;
+    return null;
+  } catch { return null; }
+}
+
+async function redirect(url, st) {
+  const code = decodeURIComponent(url.pathname.slice(3)).replace(/\/+$/, "");
+  const q = txt(url.searchParams.get("q"), 150) || "ejercicio técnica correcta";
+  let dest = "https://www.youtube.com/results?search_query=" + encodeURIComponent(q);
+  if (VCODE.test(code)) {
+    const idx = (await st.get("vidx", { type: "json" })) || {};
+    const e = idx[code];
+    if (e && /^[\w-]{11}$/.test(e.v)) {
+      let c = (await st.get("vc/" + code, { type: "json" })) || { a: true, c: 0 };
+      if (Date.now() - (c.c || 0) > DAY) {
+        const r = await alive(e.v);
+        if (r !== null) { c = { a: r, c: Date.now() }; await st.setJSON("vc/" + code, c); }
+      }
+      if (c.a !== false) dest = "https://www.youtube.com/watch?v=" + e.v;
+    }
+  }
+  return new Response(null, { status: 302, headers: { location: dest, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+}
+
 const newId = () => Number(String(Date.now()) + String(Math.floor(Math.random() * 1000)).padStart(3, "0"));
 const okId = (v) => (/^\d{10,17}$/.test(String(v)) ? String(v) : null);
 
@@ -123,6 +177,53 @@ export default async (req) => {
         const approved = (await st.get("idx", { type: "json" })) || [];
         return json(req, { ok: true, pending, approved });
       }
+      if (action === "vlist") {
+        const { blobs } = await st.list({ prefix: "vp/" });
+        const vpending = [];
+        for (const k of blobs) { const m = await st.get(k.key, { type: "json" }); if (m) vpending.push(m); }
+        vpending.sort((x, y) => x.t - y.t);
+        const idx = (await st.get("vidx", { type: "json" })) || {};
+        const vapproved = [];
+        for (const code of Object.keys(idx).sort()) {
+          const c = (await st.get("vc/" + code, { type: "json" })) || { a: true };
+          vapproved.push({ code, ...idx[code], a: c.a !== false });
+        }
+        return json(req, { ok: true, vpending, vapproved });
+      }
+      if (action === "vcheck") {
+        const idx = (await st.get("vidx", { type: "json" })) || {};
+        const codes = Object.keys(idx).sort();
+        const from = Math.max(0, parseInt(b.from) || 0), part = codes.slice(from, from + 25);
+        const res = await Promise.all(part.map(async (code) => {
+          const r = await alive(idx[code].v);
+          if (r !== null) await st.setJSON("vc/" + code, { a: r, c: Date.now() });
+          return { code, n: idx[code].n, v: idx[code].v, a: r };
+        }));
+        return json(req, { ok: true, total: codes.length, next: from + part.length < codes.length ? from + part.length : null, results: res });
+      }
+      if (action === "vdelete") {
+        const code = String((b && b.code) || "");
+        if (!VCODE.test(code)) return err(req, 400, "Código no válido.");
+        const idx = (await st.get("vidx", { type: "json" })) || {};
+        delete idx[code];
+        await st.setJSON("vidx", idx);
+        await st.delete("vc/" + code);
+        return json(req, { ok: true });
+      }
+      if (action === "vapprove" || action === "vreject") {
+        const vid = okId(b && b.id);
+        if (!vid) return err(req, 400, "Identificador no válido.");
+        const meta = await st.get("vp/" + vid, { type: "json" });
+        if (!meta) return err(req, 404, "Esa propuesta ya no está pendiente.");
+        if (action === "vapprove") {
+          const idx = (await st.get("vidx", { type: "json" })) || {};
+          idx[meta.code] = { v: meta.vid, n: meta.n, t: Date.now() };
+          await st.setJSON("vidx", idx);
+          await st.delete("vc/" + meta.code);
+        }
+        await st.delete("vp/" + vid);
+        return json(req, { ok: true });
+      }
       const id = okId(b && b.id);
       if (!id) return err(req, 400, "Identificador no válido.");
       if (action === "approve") {
@@ -145,8 +246,46 @@ export default async (req) => {
       return err(req, 400, "Acción no válida.");
     }
 
+    /* ---------- Enlaces de los PDF (públicos) ---------- */
+    if (url.pathname.startsWith("/v/")) {
+      if (req.method !== "GET" && req.method !== "HEAD") return err(req, 405, "Método no permitido.");
+      return await redirect(url, st);
+    }
+
     /* ---------- Alumnado ---------- */
     if (!same(req.headers.get("x-mf-a"), studentHash())) return err(req, 401, "Código de acceso no válido.");
+
+    if (url.pathname.endsWith("/videos")) {
+      if (req.method === "GET") {
+        const idx = (await st.get("vidx", { type: "json" })) || {};
+        const map = {};
+        for (const code of Object.keys(idx)) {
+          const c = await st.get("vc/" + code, { type: "json" });
+          if (!c || c.a !== false) map[code] = idx[code].v;
+        }
+        return json(req, { ok: true, map });
+      }
+      if (req.method === "POST") {
+        let b;
+        try { b = await req.json(); } catch { return err(req, 400, "Petición no válida."); }
+        const code = String((b && b.code) || "");
+        const vid = ytId(b && b.url);
+        if (!VCODE.test(code)) return err(req, 400, "Ejercicio no válido.");
+        if (!vid) return err(req, 400, "El enlace no es de un vídeo de YouTube.");
+        const idx = (await st.get("vidx", { type: "json" })) || {};
+        if (idx[code] && idx[code].v === vid) return json(req, { ok: true, dup: true });
+        const { blobs } = await st.list({ prefix: "vp/" });
+        for (const k of blobs) {
+          const m = await st.get(k.key, { type: "json" });
+          if (m && m.code === code && m.vid === vid) return json(req, { ok: true, dup: true });
+        }
+        if (blobs.length >= MAX_VPEND) return err(req, 429, "Hay demasiados vídeos pendientes de revisar. Avisa a tu profesor.");
+        const id = newId();
+        await st.setJSON("vp/" + id, { id, code, vid, n: txt(b.n, 80), t: Date.now() });
+        return json(req, { ok: true, id });
+      }
+      return err(req, 405, "Método no permitido.");
+    }
 
     if (req.method === "GET") {
       const idq = url.searchParams.get("img");
@@ -188,4 +327,4 @@ export default async (req) => {
   }
 };
 
-export const config = { path: ["/api/ejercicios", "/api/admin"] };
+export const config = { path: ["/api/ejercicios", "/api/admin", "/api/videos", "/v/*"] };
