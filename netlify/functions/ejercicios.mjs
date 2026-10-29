@@ -73,7 +73,7 @@ function clean(b) {
   const g = Number.isInteger(b.g) && b.g >= 0 && b.g < 40 ? b.g : 0;
   const l = Number.isInteger(b.l) && b.l >= 0 && b.l <= 2 ? b.l : 0;
   const m = /^[A-Z]{1,2}$/.test(String(b.m)) ? String(b.m) : "O";
-  return { n, v: txt(b.v, 80), g, m, l, ins: ins.length ? ins : null };
+  return { n, v: txt(b.v, 80), g, m, l, ins: ins.length ? ins : null, by: txt(b.by, 40) };
 }
 
 function parseImg(s) {
@@ -217,7 +217,7 @@ export default async (req) => {
         if (!meta) return err(req, 404, "Esa propuesta ya no está pendiente.");
         if (action === "vapprove") {
           const idx = (await st.get("vidx", { type: "json" })) || {};
-          idx[meta.code] = { v: meta.vid, n: meta.n, t: Date.now() };
+          idx[meta.code] = { v: meta.vid, n: meta.n, by: meta.by || "", t: Date.now() };
           await st.setJSON("vidx", idx);
           await st.delete("vc/" + meta.code);
         }
@@ -281,7 +281,7 @@ export default async (req) => {
         }
         if (blobs.length >= MAX_VPEND) return err(req, 429, "Hay demasiados vídeos pendientes de revisar. Avisa a tu profesor.");
         const id = newId();
-        await st.setJSON("vp/" + id, { id, code, vid, n: txt(b.n, 80), t: Date.now() });
+        await st.setJSON("vp/" + id, { id, code, vid, n: txt(b.n, 80), by: txt(b.by, 40), t: Date.now() });
         return json(req, { ok: true, id });
       }
       return err(req, 405, "Método no permitido.");
@@ -300,7 +300,8 @@ export default async (req) => {
         });
       }
       const idx = (await st.get("idx", { type: "json" })) || [];
-      return json(req, { ok: true, items: idx });
+      /* "by" (quién lo propuso) solo lo ve el profesor: no se publica al resto de la clase */
+      return json(req, { ok: true, items: idx.map(({ by, ...x }) => x) });
     }
 
     if (req.method === "POST") {
