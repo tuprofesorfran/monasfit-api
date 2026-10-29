@@ -24,7 +24,7 @@ const LOCK_MAX = 8;
 const LOCK_MS = 15 * 60 * 1000;
 const MAX_VPEND = 60;
 const DAY = 24 * 3600 * 1000;
-const VCODE = /^DS-\d{4}$/;
+const VCODE = /^(DS-\d{4}|EX-\d{10,17})$/;
 
 const store = () => getStore({ name: "ejercicios", consistency: "strong" });
 const studentHash = () => Netlify.env.get("STUDENT_HASH") || "5683055764724731";
